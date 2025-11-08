@@ -1,0 +1,7 @@
+Binaries/
+Intermediate/
+DerivedDataCache/
+Saved/
+.vscode/
+.idea/
+*.vs/
