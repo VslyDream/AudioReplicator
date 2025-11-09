@@ -75,16 +75,16 @@ void UAudioReplicatorRegistrySubsystem::SubscribeToChannel_BP(const FGuid& Sessi
         return;
     }
 
-    FReplicatorSubscription Subscription;
+    TArray<FReplicatorSubscription>& List = ChannelSubscriptions.FindOrAdd(SessionId);
+    FReplicatorSubscription& Subscription = List.AddDefaulted_GetRef();
     Subscription.Callback = Callback;
     Subscription.Listener = Callback.GetUObject();
-
-    TArray<FReplicatorSubscription>& List = ChannelSubscriptions.FindOrAdd(SessionId);
-    List.Add(Subscription);
+    Subscription.LastSessionId = SessionId;
 
     if (UAudioReplicatorComponent* Existing = GetLastSenderForSession_BP(SessionId))
     {
-        Callback.ExecuteIfBound(Existing);
+        Subscription.LastReplicator = Existing;
+        Callback.ExecuteIfBound(Existing, SessionId);
     }
 }
 
@@ -95,17 +95,17 @@ void UAudioReplicatorRegistrySubsystem::SubscribeToPlayer_BP(APlayerState* Playe
         return;
     }
 
-    FReplicatorSubscription Subscription;
-    Subscription.Callback = Callback;
-    Subscription.Listener = Callback.GetUObject();
-
     const TWeakObjectPtr<APlayerState> Key(PlayerState);
     TArray<FReplicatorSubscription>& List = PlayerSubscriptions.FindOrAdd(Key);
-    List.Add(Subscription);
+    FReplicatorSubscription& Subscription = List.AddDefaulted_GetRef();
+    Subscription.Callback = Callback;
+    Subscription.Listener = Callback.GetUObject();
+    Subscription.LastSessionId.Invalidate();
 
     if (UAudioReplicatorComponent* Existing = FindReplicatorForPlayer(PlayerState))
     {
-        Callback.ExecuteIfBound(Existing);
+        Subscription.LastReplicator = Existing;
+        Callback.ExecuteIfBound(Existing, Subscription.LastSessionId);
     }
 }
 
@@ -226,7 +226,7 @@ void UAudioReplicatorRegistrySubsystem::RegisterReplicator(UAudioReplicatorCompo
 
     if (PlayerState)
     {
-        NotifyPlayerSubscribers(PlayerState, Component);
+        NotifyPlayerSubscribers(PlayerState, Component, FGuid());
     }
 }
 
@@ -261,6 +261,15 @@ void UAudioReplicatorRegistrySubsystem::NotifySessionActivity(const FGuid& Sessi
 
     LastSessionSenders.Add(SessionId, Component);
     NotifyChannelSubscribers(SessionId, Component);
+
+    const TWeakObjectPtr<UAudioReplicatorComponent> Key(Component);
+    if (const TWeakObjectPtr<APlayerState>* Owner = ReplicatorOwners.Find(Key))
+    {
+        if (APlayerState* PlayerState = Owner->Get())
+        {
+            NotifyPlayerSubscribers(PlayerState, Component, SessionId);
+        }
+    }
 }
 
 void UAudioReplicatorRegistrySubsystem::HandleActorSpawned(AActor* Actor)
@@ -357,7 +366,9 @@ void UAudioReplicatorRegistrySubsystem::NotifyChannelSubscribers(const FGuid& Se
                 continue;
             }
 
-            Subscription.Callback.ExecuteIfBound(Component);
+            Subscription.LastReplicator = Component;
+            Subscription.LastSessionId = SessionId;
+            Subscription.Callback.ExecuteIfBound(Component, SessionId);
         }
 
         if (List->Num() == 0)
@@ -367,7 +378,7 @@ void UAudioReplicatorRegistrySubsystem::NotifyChannelSubscribers(const FGuid& Se
     }
 }
 
-void UAudioReplicatorRegistrySubsystem::NotifyPlayerSubscribers(APlayerState* PlayerState, UAudioReplicatorComponent* Component)
+void UAudioReplicatorRegistrySubsystem::NotifyPlayerSubscribers(APlayerState* PlayerState, UAudioReplicatorComponent* Component, const FGuid& SessionId)
 {
     const TWeakObjectPtr<APlayerState> Key(PlayerState);
     if (TArray<FReplicatorSubscription>* List = PlayerSubscriptions.Find(Key))
@@ -381,7 +392,12 @@ void UAudioReplicatorRegistrySubsystem::NotifyPlayerSubscribers(APlayerState* Pl
                 continue;
             }
 
-            Subscription.Callback.ExecuteIfBound(Component);
+            Subscription.LastReplicator = Component;
+            if (SessionId.IsValid())
+            {
+                Subscription.LastSessionId = SessionId;
+            }
+            Subscription.Callback.ExecuteIfBound(Component, Subscription.LastSessionId);
         }
 
         if (List->Num() == 0)

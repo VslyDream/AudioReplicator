@@ -426,6 +426,14 @@ void UAudioReplicatorComponent::Multicast_EndTransfer_Implementation(const FGuid
     {
         In->bEnded = true;
     }
+
+    if (UWorld* World = GetWorld())
+    {
+        if (UAudioReplicatorRegistrySubsystem* Registry = World->GetSubsystem<UAudioReplicatorRegistrySubsystem>())
+        {
+            Registry->NotifySessionActivity(SessionId, this);
+        }
+    }
     OnTransferEnded.Broadcast(this, SessionId);
 }
 

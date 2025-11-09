@@ -10,7 +10,7 @@ class APlayerState;
 class UAudioReplicatorComponent;
 
 // Delegate invoked when a replicator is available for a subscription.
-DECLARE_DYNAMIC_DELEGATE_OneParam(FOnAudioReplicatorAvailable, UAudioReplicatorComponent*, Replicator);
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FOnAudioReplicatorAvailable, UAudioReplicatorComponent*, Replicator, FGuid, SessionId);
 
 // Registry events for tracking replicator lifecycle.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAudioReplicatorRegistryChanged, UAudioReplicatorComponent*, Replicator);
@@ -72,6 +72,8 @@ private:
     {
         FOnAudioReplicatorAvailable Callback;
         TWeakObjectPtr<UObject> Listener;
+        TWeakObjectPtr<UAudioReplicatorComponent> LastReplicator;
+        FGuid LastSessionId;
 
         bool IsValid() const { return Listener.IsValid() && Callback.IsBound(); }
     };
@@ -86,7 +88,7 @@ private:
     void RegisterFromPlayerState(APlayerState* PlayerState);
 
     void NotifyChannelSubscribers(const FGuid& SessionId, UAudioReplicatorComponent* Component);
-    void NotifyPlayerSubscribers(APlayerState* PlayerState, UAudioReplicatorComponent* Component);
+    void NotifyPlayerSubscribers(APlayerState* PlayerState, UAudioReplicatorComponent* Component, const FGuid& SessionId);
 
     void CleanupExpiredSubscriptions();
     void CleanupExpiredSessionSenders();
