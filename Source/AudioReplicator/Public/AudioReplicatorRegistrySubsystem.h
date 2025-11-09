@@ -5,7 +5,10 @@
 #include "AudioReplicatorRegistrySubsystem.generated.h"
 
 class AActor;
+class AController;
+class AGameModeBase;
 class AGameStateBase;
+class APlayerController;
 class APlayerState;
 class UAudioReplicatorComponent;
 
@@ -80,6 +83,10 @@ private:
 
     void HandleActorSpawned(AActor* Actor);
     void HandleGameStateSet(AGameStateBase* GameState);
+    UFUNCTION()
+    void HandlePostLogin(APlayerController* NewPC);
+    UFUNCTION()
+    void HandleLogout(AController* Exiting);
     void HandlePlayerStateAdded(APlayerState* PlayerState);
     void HandlePlayerStateRemoved(APlayerState* PlayerState);
 

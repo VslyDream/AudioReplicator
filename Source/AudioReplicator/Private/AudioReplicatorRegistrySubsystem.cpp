@@ -2,6 +2,8 @@
 #include "AudioReplicatorComponent.h"
 
 #include "Engine/World.h"
+#include "GameFramework/Controller.h"
+#include "GameFramework/GameModeBase.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
@@ -14,16 +16,25 @@ void UAudioReplicatorRegistrySubsystem::Initialize(FSubsystemCollectionBase& Col
 {
     Super::Initialize(Collection);
 
-    if (UWorld* World = GetWorld())
+    UWorld* World = GetWorld();
+    if (!World)
     {
-        ActorSpawnedHandle = World->AddOnActorSpawnedHandler(
-            FOnActorSpawned::FDelegate::CreateUObject(this, &UAudioReplicatorRegistrySubsystem::HandleActorSpawned));
-        GameStateSetHandle = World->GameStateSetEvent.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandleGameStateSet);
+        return;
+    }
 
-        if (AGameStateBase* GameState = World->GetGameState())
-        {
-            BindToGameState(GameState);
-        }
+    ActorSpawnedHandle = World->AddOnActorSpawnedHandler(
+        FOnActorSpawned::FDelegate::CreateUObject(this, &UAudioReplicatorRegistrySubsystem::HandleActorSpawned));
+    GameStateSetHandle = World->GameStateSetEvent.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandleGameStateSet);
+
+    if (AGameModeBase* GameMode = World->GetAuthGameMode<AGameModeBase>())
+    {
+        GameMode->OnPostLogin.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePostLogin);
+        GameMode->OnLogout.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandleLogout);
+    }
+
+    if (AGameStateBase* GameState = World->GetGameState<AGameStateBase>())
+    {
+        BindToGameState(GameState);
     }
 }
 
@@ -31,6 +42,12 @@ void UAudioReplicatorRegistrySubsystem::Deinitialize()
 {
     if (UWorld* World = GetWorld())
     {
+        if (AGameModeBase* GameMode = World->GetAuthGameMode<AGameModeBase>())
+        {
+            GameMode->OnPostLogin.RemoveAll(this);
+            GameMode->OnLogout.RemoveAll(this);
+        }
+
         if (ActorSpawnedHandle.IsValid())
         {
             World->RemoveOnActorSpawnedHandler(ActorSpawnedHandle);
@@ -41,12 +58,6 @@ void UAudioReplicatorRegistrySubsystem::Deinitialize()
             World->GameStateSetEvent.Remove(GameStateSetHandle);
             GameStateSetHandle.Reset();
         }
-    }
-
-    if (AGameStateBase* GameState = CachedGameState.Get())
-    {
-        GameState->OnPlayerStateAdded.RemoveAll(this);
-        GameState->OnPlayerStateRemoved.RemoveAll(this);
     }
 
     CachedGameState.Reset();
@@ -78,7 +89,10 @@ void UAudioReplicatorRegistrySubsystem::SubscribeToChannel_BP(const FGuid& Sessi
     TArray<FReplicatorSubscription>& List = ChannelSubscriptions.FindOrAdd(SessionId);
     FReplicatorSubscription& Subscription = List.AddDefaulted_GetRef();
     Subscription.Callback = Callback;
-    Subscription.Listener = Callback.GetUObject();
+    if (const UObject* Listener = Callback.GetUObject())
+    {
+        Subscription.Listener = const_cast<UObject*>(Listener);
+    }
     Subscription.LastSessionId = SessionId;
 
     if (UAudioReplicatorComponent* Existing = GetLastSenderForSession_BP(SessionId))
@@ -99,7 +113,10 @@ void UAudioReplicatorRegistrySubsystem::SubscribeToPlayer_BP(APlayerState* Playe
     TArray<FReplicatorSubscription>& List = PlayerSubscriptions.FindOrAdd(Key);
     FReplicatorSubscription& Subscription = List.AddDefaulted_GetRef();
     Subscription.Callback = Callback;
-    Subscription.Listener = Callback.GetUObject();
+    if (const UObject* Listener = Callback.GetUObject())
+    {
+        Subscription.Listener = const_cast<UObject*>(Listener);
+    }
     Subscription.LastSessionId.Invalidate();
 
     if (UAudioReplicatorComponent* Existing = FindReplicatorForPlayer(PlayerState))
@@ -310,20 +327,27 @@ void UAudioReplicatorRegistrySubsystem::BindToGameState(AGameStateBase* GameStat
         return;
     }
 
-    if (AGameStateBase* Previous = CachedGameState.Get())
-    {
-        Previous->OnPlayerStateAdded.RemoveAll(this);
-        Previous->OnPlayerStateRemoved.RemoveAll(this);
-    }
-
     CachedGameState = GameState;
 
     if (GameState)
     {
-        GameState->OnPlayerStateAdded.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateAdded);
-        GameState->OnPlayerStateRemoved.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateRemoved);
-
         RefreshFromGameState(GameState);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::HandlePostLogin(APlayerController* NewPC)
+{
+    if (APlayerState* PlayerState = NewPC ? NewPC->PlayerState : nullptr)
+    {
+        HandlePlayerStateAdded(PlayerState);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::HandleLogout(AController* Exiting)
+{
+    if (APlayerState* PlayerState = Exiting ? Exiting->PlayerState : nullptr)
+    {
+        HandlePlayerStateRemoved(PlayerState);
     }
 }
 
