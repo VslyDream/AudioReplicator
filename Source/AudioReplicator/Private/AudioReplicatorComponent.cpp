@@ -375,14 +375,6 @@ void UAudioReplicatorComponent::Server_EndTransfer_Implementation(const FGuid& S
 
 void UAudioReplicatorComponent::Multicast_StartTransfer_Implementation(const FGuid& SessionId, const FOpusStreamHeader& Header)
 {
-    if (UWorld* World = GetWorld())
-    {
-        if (UAudioReplicatorRegistrySubsystem* Registry = World->GetSubsystem<UAudioReplicatorRegistrySubsystem>())
-        {
-            Registry->NotifySessionActivity(SessionId, this);
-        }
-    }
-
     FIncomingTransfer& In = Incoming.FindOrAdd(SessionId);
     In.Header = Header;
     In.Packets.Reset(Header.NumPackets > 0 ? Header.NumPackets : 0);
