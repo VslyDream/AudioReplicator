@@ -1,0 +1,458 @@
+#include "AudioReplicatorRegistrySubsystem.h"
+#include "AudioReplicatorComponent.h"
+
+#include "Engine/World.h"
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/PlayerState.h"
+
+UAudioReplicatorRegistrySubsystem::UAudioReplicatorRegistrySubsystem()
+{
+}
+
+void UAudioReplicatorRegistrySubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+    Super::Initialize(Collection);
+
+    if (UWorld* World = GetWorld())
+    {
+        ActorSpawnedHandle = World->AddOnActorSpawnedHandler(
+            FOnActorSpawned::FDelegate::CreateUObject(this, &UAudioReplicatorRegistrySubsystem::HandleActorSpawned));
+        GameStateSetHandle = World->GameStateSetEvent.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandleGameStateSet);
+
+        if (AGameStateBase* GameState = World->GetGameState())
+        {
+            BindToGameState(GameState);
+        }
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::Deinitialize()
+{
+    if (UWorld* World = GetWorld())
+    {
+        if (ActorSpawnedHandle.IsValid())
+        {
+            World->RemoveOnActorSpawnedHandler(ActorSpawnedHandle);
+            ActorSpawnedHandle.Reset();
+        }
+        if (GameStateSetHandle.IsValid())
+        {
+            World->GameStateSetEvent.Remove(GameStateSetHandle);
+            GameStateSetHandle.Reset();
+        }
+    }
+
+    if (AGameStateBase* GameState = CachedGameState.Get())
+    {
+        GameState->OnPlayerStateAdded.RemoveAll(this);
+        GameState->OnPlayerStateRemoved.RemoveAll(this);
+    }
+
+    CachedGameState.Reset();
+    ReplicatorOwners.Empty();
+    ChannelSubscriptions.Empty();
+    PlayerSubscriptions.Empty();
+    LastSessionSenders.Empty();
+
+    Super::Deinitialize();
+}
+
+void UAudioReplicatorRegistrySubsystem::OnWorldBeginPlay(UWorld& InWorld)
+{
+    Super::OnWorldBeginPlay(InWorld);
+
+    if (AGameStateBase* GameState = InWorld.GetGameState())
+    {
+        BindToGameState(GameState);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::SubscribeToChannel_BP(const FGuid& SessionId, const FOnAudioReplicatorAvailable& Callback)
+{
+    if (!Callback.IsBound())
+    {
+        return;
+    }
+
+    FReplicatorSubscription Subscription;
+    Subscription.Callback = Callback;
+    Subscription.Listener = Callback.GetUObject();
+
+    TArray<FReplicatorSubscription>& List = ChannelSubscriptions.FindOrAdd(SessionId);
+    List.Add(Subscription);
+
+    if (UAudioReplicatorComponent* Existing = GetLastSenderForSession_BP(SessionId))
+    {
+        Callback.ExecuteIfBound(Existing);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::SubscribeToPlayer_BP(APlayerState* PlayerState, const FOnAudioReplicatorAvailable& Callback)
+{
+    if (!PlayerState || !Callback.IsBound())
+    {
+        return;
+    }
+
+    FReplicatorSubscription Subscription;
+    Subscription.Callback = Callback;
+    Subscription.Listener = Callback.GetUObject();
+
+    const TWeakObjectPtr<APlayerState> Key(PlayerState);
+    TArray<FReplicatorSubscription>& List = PlayerSubscriptions.FindOrAdd(Key);
+    List.Add(Subscription);
+
+    if (UAudioReplicatorComponent* Existing = FindReplicatorForPlayer(PlayerState))
+    {
+        Callback.ExecuteIfBound(Existing);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::Unsubscribe_BP(const FGuid& SessionId, UObject* Listener)
+{
+    if (!Listener)
+    {
+        return;
+    }
+
+    if (TArray<FReplicatorSubscription>* List = ChannelSubscriptions.Find(SessionId))
+    {
+        for (int32 Index = List->Num() - 1; Index >= 0; --Index)
+        {
+            const FReplicatorSubscription& Subscription = (*List)[Index];
+            if (!Subscription.IsValid() || Subscription.Listener.Get() == Listener)
+            {
+                List->RemoveAtSwap(Index);
+            }
+        }
+
+        if (List->Num() == 0)
+        {
+            ChannelSubscriptions.Remove(SessionId);
+        }
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::UnsubscribeAllFor_BP(UObject* Listener)
+{
+    if (!Listener)
+    {
+        return;
+    }
+
+    const TWeakObjectPtr<UObject> ListenerPtr(Listener);
+
+    for (auto It = ChannelSubscriptions.CreateIterator(); It; ++It)
+    {
+        TArray<FReplicatorSubscription>& Subs = It.Value();
+        for (int32 Index = Subs.Num() - 1; Index >= 0; --Index)
+        {
+            if (!Subs[Index].IsValid() || Subs[Index].Listener == ListenerPtr)
+            {
+                Subs.RemoveAtSwap(Index);
+            }
+        }
+
+        if (Subs.Num() == 0)
+        {
+            It.RemoveCurrent();
+        }
+    }
+
+    for (auto It = PlayerSubscriptions.CreateIterator(); It; ++It)
+    {
+        TArray<FReplicatorSubscription>& Subs = It.Value();
+        for (int32 Index = Subs.Num() - 1; Index >= 0; --Index)
+        {
+            if (!Subs[Index].IsValid() || Subs[Index].Listener == ListenerPtr)
+            {
+                Subs.RemoveAtSwap(Index);
+            }
+        }
+
+        if (Subs.Num() == 0)
+        {
+            It.RemoveCurrent();
+        }
+    }
+}
+
+UAudioReplicatorComponent* UAudioReplicatorRegistrySubsystem::GetLastSenderForSession_BP(const FGuid& SessionId) const
+{
+    const_cast<UAudioReplicatorRegistrySubsystem*>(this)->CleanupExpiredSessionSenders();
+    if (const TWeakObjectPtr<UAudioReplicatorComponent>* Found = LastSessionSenders.Find(SessionId))
+    {
+        return Found->Get();
+    }
+    return nullptr;
+}
+
+void UAudioReplicatorRegistrySubsystem::RegisterReplicator(UAudioReplicatorComponent* Component)
+{
+    if (!Component)
+    {
+        return;
+    }
+
+    CleanupExpiredSessionSenders();
+    CleanupExpiredSubscriptions();
+
+    const TWeakObjectPtr<UAudioReplicatorComponent> Key(Component);
+    if (ReplicatorOwners.Contains(Key))
+    {
+        return;
+    }
+
+    APlayerState* PlayerState = nullptr;
+    if (AActor* Owner = Component->GetOwner())
+    {
+        PlayerState = Cast<APlayerState>(Owner);
+        if (!PlayerState)
+        {
+            if (const APlayerController* PC = Cast<APlayerController>(Owner))
+            {
+                PlayerState = PC->PlayerState;
+            }
+        }
+    }
+    if (!PlayerState)
+    {
+        PlayerState = Component->GetTypedOuter<APlayerState>();
+    }
+    ReplicatorOwners.Add(Key, PlayerState);
+
+    OnReplicatorAdded.Broadcast(Component);
+
+    if (PlayerState)
+    {
+        NotifyPlayerSubscribers(PlayerState, Component);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::UnregisterReplicator(UAudioReplicatorComponent* Component)
+{
+    if (!Component)
+    {
+        return;
+    }
+
+    const TWeakObjectPtr<UAudioReplicatorComponent> Key(Component);
+    if (ReplicatorOwners.Remove(Key) > 0)
+    {
+        for (auto It = LastSessionSenders.CreateIterator(); It; ++It)
+        {
+            if (It.Value().Get() == Component)
+            {
+                It.RemoveCurrent();
+            }
+        }
+
+        OnReplicatorRemoved.Broadcast(Component);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::NotifySessionActivity(const FGuid& SessionId, UAudioReplicatorComponent* Component)
+{
+    if (!Component || !SessionId.IsValid())
+    {
+        return;
+    }
+
+    LastSessionSenders.Add(SessionId, Component);
+    NotifyChannelSubscribers(SessionId, Component);
+}
+
+void UAudioReplicatorRegistrySubsystem::HandleActorSpawned(AActor* Actor)
+{
+    if (APlayerState* PlayerState = Cast<APlayerState>(Actor))
+    {
+        RegisterFromPlayerState(PlayerState);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::HandleGameStateSet(AGameStateBase* GameState)
+{
+    BindToGameState(GameState);
+}
+
+void UAudioReplicatorRegistrySubsystem::HandlePlayerStateAdded(APlayerState* PlayerState)
+{
+    RegisterFromPlayerState(PlayerState);
+}
+
+void UAudioReplicatorRegistrySubsystem::HandlePlayerStateRemoved(APlayerState* PlayerState)
+{
+    if (!PlayerState)
+    {
+        return;
+    }
+
+    if (UAudioReplicatorComponent* Component = PlayerState->FindComponentByClass<UAudioReplicatorComponent>())
+    {
+        UnregisterReplicator(Component);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::BindToGameState(AGameStateBase* GameState)
+{
+    if (CachedGameState.Get() == GameState)
+    {
+        return;
+    }
+
+    if (AGameStateBase* Previous = CachedGameState.Get())
+    {
+        Previous->OnPlayerStateAdded.RemoveAll(this);
+        Previous->OnPlayerStateRemoved.RemoveAll(this);
+    }
+
+    CachedGameState = GameState;
+
+    if (GameState)
+    {
+        GameState->OnPlayerStateAdded.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateAdded);
+        GameState->OnPlayerStateRemoved.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateRemoved);
+
+        RefreshFromGameState(GameState);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::RefreshFromGameState(AGameStateBase* GameState)
+{
+    if (!GameState)
+    {
+        return;
+    }
+
+    for (APlayerState* PlayerState : GameState->PlayerArray)
+    {
+        RegisterFromPlayerState(PlayerState);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::RegisterFromPlayerState(APlayerState* PlayerState)
+{
+    if (!PlayerState)
+    {
+        return;
+    }
+
+    if (UAudioReplicatorComponent* Component = PlayerState->FindComponentByClass<UAudioReplicatorComponent>())
+    {
+        RegisterReplicator(Component);
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::NotifyChannelSubscribers(const FGuid& SessionId, UAudioReplicatorComponent* Component)
+{
+    if (TArray<FReplicatorSubscription>* List = ChannelSubscriptions.Find(SessionId))
+    {
+        for (int32 Index = List->Num() - 1; Index >= 0; --Index)
+        {
+            FReplicatorSubscription& Subscription = (*List)[Index];
+            if (!Subscription.IsValid())
+            {
+                List->RemoveAtSwap(Index);
+                continue;
+            }
+
+            Subscription.Callback.ExecuteIfBound(Component);
+        }
+
+        if (List->Num() == 0)
+        {
+            ChannelSubscriptions.Remove(SessionId);
+        }
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::NotifyPlayerSubscribers(APlayerState* PlayerState, UAudioReplicatorComponent* Component)
+{
+    const TWeakObjectPtr<APlayerState> Key(PlayerState);
+    if (TArray<FReplicatorSubscription>* List = PlayerSubscriptions.Find(Key))
+    {
+        for (int32 Index = List->Num() - 1; Index >= 0; --Index)
+        {
+            FReplicatorSubscription& Subscription = (*List)[Index];
+            if (!Subscription.IsValid())
+            {
+                List->RemoveAtSwap(Index);
+                continue;
+            }
+
+            Subscription.Callback.ExecuteIfBound(Component);
+        }
+
+        if (List->Num() == 0)
+        {
+            PlayerSubscriptions.Remove(Key);
+        }
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::CleanupExpiredSubscriptions()
+{
+    for (auto It = ChannelSubscriptions.CreateIterator(); It; ++It)
+    {
+        TArray<FReplicatorSubscription>& Subs = It.Value();
+        for (int32 Index = Subs.Num() - 1; Index >= 0; --Index)
+        {
+            if (!Subs[Index].IsValid())
+            {
+                Subs.RemoveAtSwap(Index);
+            }
+        }
+
+        if (Subs.Num() == 0)
+        {
+            It.RemoveCurrent();
+        }
+    }
+
+    for (auto It = PlayerSubscriptions.CreateIterator(); It; ++It)
+    {
+        TArray<FReplicatorSubscription>& Subs = It.Value();
+        for (int32 Index = Subs.Num() - 1; Index >= 0; --Index)
+        {
+            if (!Subs[Index].IsValid())
+            {
+                Subs.RemoveAtSwap(Index);
+            }
+        }
+
+        if (Subs.Num() == 0)
+        {
+            It.RemoveCurrent();
+        }
+    }
+}
+
+void UAudioReplicatorRegistrySubsystem::CleanupExpiredSessionSenders()
+{
+    for (auto It = LastSessionSenders.CreateIterator(); It; ++It)
+    {
+        if (!It.Value().IsValid())
+        {
+            It.RemoveCurrent();
+        }
+    }
+}
+
+UAudioReplicatorComponent* UAudioReplicatorRegistrySubsystem::FindReplicatorForPlayer(APlayerState* PlayerState) const
+{
+    if (!PlayerState)
+    {
+        return nullptr;
+    }
+
+    for (const auto& Pair : ReplicatorOwners)
+    {
+        if (Pair.Value.Get() == PlayerState)
+        {
+            return Pair.Key.Get();
+        }
+    }
+
+    return nullptr;
+}
