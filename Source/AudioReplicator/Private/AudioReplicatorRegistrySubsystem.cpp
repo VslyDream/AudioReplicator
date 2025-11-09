@@ -5,6 +5,7 @@
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
+#include "GameFramework/Pawn.h"
 
 UAudioReplicatorRegistrySubsystem::UAudioReplicatorRegistrySubsystem()
 {
@@ -180,6 +181,83 @@ UAudioReplicatorComponent* UAudioReplicatorRegistrySubsystem::GetLastSenderForSe
     {
         return Found->Get();
     }
+    return nullptr;
+}
+
+UAudioReplicatorComponent* UAudioReplicatorRegistrySubsystem::GetLocalReplicator_BP() const
+{
+    UWorld* World = GetWorld();
+    if (!World)
+    {
+        return nullptr;
+    }
+
+    auto ResolveFromPlayerState = [this](APlayerState* PlayerState) -> UAudioReplicatorComponent*
+    {
+        if (!PlayerState)
+        {
+            return nullptr;
+        }
+
+        if (UAudioReplicatorComponent* Registered = FindReplicatorForPlayer(PlayerState))
+        {
+            return Registered;
+        }
+
+        return PlayerState->FindComponentByClass<UAudioReplicatorComponent>();
+    };
+
+    for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+    {
+        const APlayerController* Controller = It->Get();
+        if (!Controller || !Controller->IsLocalController())
+        {
+            continue;
+        }
+
+        if (UAudioReplicatorComponent* FromState = ResolveFromPlayerState(Controller->PlayerState))
+        {
+            return FromState;
+        }
+
+        if (const APawn* Pawn = Controller->GetPawn())
+        {
+            if (UAudioReplicatorComponent* PawnComponent = Pawn->FindComponentByClass<UAudioReplicatorComponent>())
+            {
+                return PawnComponent;
+            }
+        }
+
+        if (UAudioReplicatorComponent* ControllerComponent = Controller->FindComponentByClass<UAudioReplicatorComponent>())
+        {
+            return ControllerComponent;
+        }
+    }
+
+    for (const auto& Pair : ReplicatorOwners)
+    {
+        UAudioReplicatorComponent* Component = Pair.Key.Get();
+        if (!Component)
+        {
+            continue;
+        }
+
+        if (const AActor* Owner = Component->GetOwner())
+        {
+            if (const APlayerController* PC = Cast<APlayerController>(Owner))
+            {
+                if (PC->IsLocalController())
+                {
+                    return Component;
+                }
+            }
+            else if (Owner->HasLocalNetOwner())
+            {
+                return Component;
+            }
+        }
+    }
+
     return nullptr;
 }
 
