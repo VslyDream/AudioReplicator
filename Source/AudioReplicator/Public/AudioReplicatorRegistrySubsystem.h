@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
+#include "Engine/EngineTypes.h" // EEndPlayReason::Type
 #include "AudioReplicatorRegistrySubsystem.generated.h"
 
 class AActor;
@@ -80,8 +81,9 @@ private:
 
     void HandleActorSpawned(AActor* Actor);
     void HandleGameStateSet(AGameStateBase* GameState);
-    void HandlePlayerStateAdded(APlayerState* PlayerState);
-    void HandlePlayerStateRemoved(APlayerState* PlayerState);
+
+    // PlayerState lifecycle is tracked via OnEndPlay instead of GameState delegates.
+    UFUNCTION()
     void HandlePlayerStateEndPlay(AActor* Actor, EEndPlayReason::Type Reason);
 
 

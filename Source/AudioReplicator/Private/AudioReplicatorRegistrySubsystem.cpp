@@ -43,7 +43,7 @@ void UAudioReplicatorRegistrySubsystem::Deinitialize()
         }
     }
 
-
+    // AGameStateBase does not expose PlayerState add/remove delegates in UE 5.6.
     CachedGameState.Reset();
     ReplicatorOwners.Empty();
     ChannelSubscriptions.Empty();
@@ -280,35 +280,11 @@ void UAudioReplicatorRegistrySubsystem::HandleGameStateSet(AGameStateBase* GameS
     BindToGameState(GameState);
 }
 
-void UAudioReplicatorRegistrySubsystem::HandlePlayerStateAdded(APlayerState* PlayerState)
-{
-    RegisterFromPlayerState(PlayerState);
-}
-
-void UAudioReplicatorRegistrySubsystem::HandlePlayerStateRemoved(APlayerState* PlayerState)
-{
-    if (!PlayerState)
-    {
-        return;
-    }
-
-    if (UAudioReplicatorComponent* Component = PlayerState->FindComponentByClass<UAudioReplicatorComponent>())
-    {
-        UnregisterReplicator(Component);
-    }
-}
-
 void UAudioReplicatorRegistrySubsystem::BindToGameState(AGameStateBase* GameState)
 {
     if (CachedGameState.Get() == GameState)
     {
         return;
-    }
-
-    if (AGameStateBase* Previous = CachedGameState.Get())
-    {
-        Previous->OnPlayerStateAdded.RemoveAll(this);
-        Previous->OnPlayerStateRemoved.RemoveAll(this);
     }
 
     CachedGameState = GameState;
@@ -341,7 +317,8 @@ void UAudioReplicatorRegistrySubsystem::RegisterFromPlayerState(APlayerState* Pl
     if (UAudioReplicatorComponent* Component = PlayerState->FindComponentByClass<UAudioReplicatorComponent>())
     {
         RegisterReplicator(Component);
-        PlayerState->OnEndPlay.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateEndPlay);
+        // OnEndPlay is a dynamic multicast delegate; bind via AddUniqueDynamic.
+        PlayerState->OnEndPlay.AddUniqueDynamic(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateEndPlay);
     }
 }
 
@@ -353,6 +330,7 @@ void UAudioReplicatorRegistrySubsystem::HandlePlayerStateEndPlay(AActor* Actor, 
         {
             UnregisterReplicator(Comp);
         }
+        PlayerSubscriptions.Remove(PS);
     }
 }
 
