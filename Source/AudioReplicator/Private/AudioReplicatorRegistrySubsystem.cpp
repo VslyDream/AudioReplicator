@@ -2,6 +2,7 @@
 #include "AudioReplicatorComponent.h"
 
 #include "Engine/World.h"
+#include "GameFramework/GameState.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
@@ -45,8 +46,11 @@ void UAudioReplicatorRegistrySubsystem::Deinitialize()
 
     if (AGameStateBase* GameState = CachedGameState.Get())
     {
-        GameState->OnPlayerStateAdded.RemoveAll(this);
-        GameState->OnPlayerStateRemoved.RemoveAll(this);
+        if (AGameState* TypedGameState = Cast<AGameState>(GameState))
+        {
+            TypedGameState->OnPlayerStateAdded.RemoveAll(this);
+            TypedGameState->OnPlayerStateRemoved.RemoveAll(this);
+        }
     }
 
     CachedGameState.Reset();
@@ -78,7 +82,10 @@ void UAudioReplicatorRegistrySubsystem::SubscribeToChannel_BP(const FGuid& Sessi
     TArray<FReplicatorSubscription>& List = ChannelSubscriptions.FindOrAdd(SessionId);
     FReplicatorSubscription& Subscription = List.AddDefaulted_GetRef();
     Subscription.Callback = Callback;
-    Subscription.Listener = Callback.GetUObject();
+    if (const UObject* Listener = Callback.GetUObject())
+    {
+        Subscription.Listener = const_cast<UObject*>(Listener);
+    }
     Subscription.LastSessionId = SessionId;
 
     if (UAudioReplicatorComponent* Existing = GetLastSenderForSession_BP(SessionId))
@@ -99,7 +106,10 @@ void UAudioReplicatorRegistrySubsystem::SubscribeToPlayer_BP(APlayerState* Playe
     TArray<FReplicatorSubscription>& List = PlayerSubscriptions.FindOrAdd(Key);
     FReplicatorSubscription& Subscription = List.AddDefaulted_GetRef();
     Subscription.Callback = Callback;
-    Subscription.Listener = Callback.GetUObject();
+    if (const UObject* Listener = Callback.GetUObject())
+    {
+        Subscription.Listener = const_cast<UObject*>(Listener);
+    }
     Subscription.LastSessionId.Invalidate();
 
     if (UAudioReplicatorComponent* Existing = FindReplicatorForPlayer(PlayerState))
@@ -312,16 +322,22 @@ void UAudioReplicatorRegistrySubsystem::BindToGameState(AGameStateBase* GameStat
 
     if (AGameStateBase* Previous = CachedGameState.Get())
     {
-        Previous->OnPlayerStateAdded.RemoveAll(this);
-        Previous->OnPlayerStateRemoved.RemoveAll(this);
+        if (AGameState* TypedPrevious = Cast<AGameState>(Previous))
+        {
+            TypedPrevious->OnPlayerStateAdded.RemoveAll(this);
+            TypedPrevious->OnPlayerStateRemoved.RemoveAll(this);
+        }
     }
 
     CachedGameState = GameState;
 
     if (GameState)
     {
-        GameState->OnPlayerStateAdded.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateAdded);
-        GameState->OnPlayerStateRemoved.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateRemoved);
+        if (AGameState* TypedGameState = Cast<AGameState>(GameState))
+        {
+            TypedGameState->OnPlayerStateAdded.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateAdded);
+            TypedGameState->OnPlayerStateRemoved.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateRemoved);
+        }
 
         RefreshFromGameState(GameState);
     }
