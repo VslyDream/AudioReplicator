@@ -12,20 +12,26 @@ All required libraries are included in the ThirdParty directory and work out of 
 * **Local encode/decode utilities** – `UAudioReplicatorBPLibrary` loads PCM16 WAV files, converts the samples to Opus packets, and restores packets back to PCM16 or WAV output when needed.
 * **Packet persistence helpers** – Blueprint nodes expose packing/unpacking for serialized Opus data so the frames can be written to disk or cached in save data.
 * **Network-ready actor component** – `UAudioReplicatorComponent` handles reliable header delivery, chunked frame replication, and transfer bookkeeping so gameplay code only needs to trigger broadcasts and react to events.
+* **World registry subsystem** – `UAudioReplicatorRegistrySubsystem` tracks every replicator in the current world, exposes Blueprint subscription hooks, and resolves the most recent sender for a given Opus session.
 * **Blueprint-friendly data types** – `FOpusStreamHeader`, `FOpusPacket`, and `FOpusChunk` wrap stream metadata and per-frame payloads to comply with UFUNCTION restrictions while keeping packet ordering intact.
 * **Runtime debugging** – Optional helpers expose formatted status text and per-session diagnostics for both outgoing and incoming transfers to help visualize replication health.
 
 ## Quick start
 
-1. Add a replicated `UAudioReplicatorComponent` to a replicated  client-owned actor (a `PLayerState` is ideal).
+1. Add a replicated `UAudioReplicatorComponent` to a replicated client-owned actor (a `PlayerState` is ideal).
 2. **Prepare source audio** with the Blueprint library: load a PCM16 WAV, encode it to Opus packets, or call the convenience node `TranscodeWavToOpusAndBack` to validate round-tripping.
 3. **Start a broadcast** from the owning client:
    * Use `StartBroadcastFromWav` to encode and stream straight from a WAV file, or
    * Use `StartBroadcastOpus` if you already have packets plus a `FOpusStreamHeader` describing the stream.
 4. **React to replication events** on every client: bind to `OnTransferStarted`, `OnChunkReceived`, and `OnTransferEnded` to drive UI or progress tracking. Once the transfer ends, `GetReceivedPackets` returns the assembled frame list and header so you can decode or save the data locally.
-5. **Optionally cancel** in-flight transfers with `CancelBroadcast`, or query `GetOutgoingDebugInfo` / `GetIncomingDebugInfo` to surface detailed state in debug widgets.
+5. **Leverage the registry subsystem** when you need to discover replicators dynamically. The world subsystem fires `OnReplicatorAdded` / `OnReplicatorRemoved` and supports Blueprint subscriptions that map Opus session IDs or `APlayerState` owners to active components.
+6. **Optionally cancel** in-flight transfers with `CancelBroadcast`, or query `GetOutgoingDebugInfo` / `GetIncomingDebugInfo` to surface detailed state in debug widgets.
 
 The component automatically sequences frames, sends the Opus stream header reliably, throttles the number of packets sent each tick, and replicates completion markers once the queue drains. Incoming clients maintain an indexable buffer that is safe against missing headers and can tolerate unknown packet counts by expanding on demand.
+
+## Registry subsystem overview
+
+`UAudioReplicatorRegistrySubsystem` centralizes discovery for gameplay code that needs to coordinate multiple replicators. The subsystem automatically registers components as they begin play, re-scans the `AGameStateBase` for existing `APlayerState` owners, and tracks which component most recently broadcast for each Opus session. Blueprint callbacks can subscribe by session GUID or player owner, receive immediate notifications when a matching replicator is available, and listen for lifecycle events to drive UI affordances such as speaker lists.
 
 ## Data flow overview
 
@@ -49,7 +55,7 @@ The component automatically sequences frames, sends the Opus stream header relia
 ## Related files
 
 * `AudioReplicator.uplugin` – module descriptor with category and startup configuration.
-* `Source/AudioReplicator/Public` – Blueprint API headers (function library, component, data types, debug helpers).
-* `Source/AudioReplicator/Private` – Implementation of encoding, chunking, and network replication behavior.
+* `Source/AudioReplicator/Public` – Blueprint API headers (function library, component, registry subsystem, data types, debug helpers).
+* `Source/AudioReplicator/Private` – Implementation of encoding, chunking, registry bookkeeping, and network replication behavior.
 * `Source/ThirdParty/Opus` – Build script and static library wrapping libopus for encoding/decoding support.
 
