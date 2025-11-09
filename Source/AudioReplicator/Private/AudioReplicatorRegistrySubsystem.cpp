@@ -26,10 +26,18 @@ void UAudioReplicatorRegistrySubsystem::Initialize(FSubsystemCollectionBase& Col
         FOnActorSpawned::FDelegate::CreateUObject(this, &UAudioReplicatorRegistrySubsystem::HandleActorSpawned));
     GameStateSetHandle = World->GameStateSetEvent.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandleGameStateSet);
 
-    if (AGameModeBase* GameMode = World->GetAuthGameMode<AGameModeBase>())
+    if (World->GetAuthGameMode<AGameModeBase>())
     {
-        GameMode->OnPostLogin.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePostLogin);
-        GameMode->OnLogout.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandleLogout);
+        if (!GameModePostLoginHandle.IsValid())
+        {
+            GameModePostLoginHandle = FGameModeEvents::OnGameModePostLogin().AddUObject(
+                this, &UAudioReplicatorRegistrySubsystem::HandleGameModePostLogin);
+        }
+        if (!GameModeLogoutHandle.IsValid())
+        {
+            GameModeLogoutHandle = FGameModeEvents::OnGameModeLogout().AddUObject(
+                this, &UAudioReplicatorRegistrySubsystem::HandleGameModeLogout);
+        }
     }
 
     if (AGameStateBase* GameState = World->GetGameState<AGameStateBase>())
@@ -42,12 +50,6 @@ void UAudioReplicatorRegistrySubsystem::Deinitialize()
 {
     if (UWorld* World = GetWorld())
     {
-        if (AGameModeBase* GameMode = World->GetAuthGameMode<AGameModeBase>())
-        {
-            GameMode->OnPostLogin.RemoveAll(this);
-            GameMode->OnLogout.RemoveAll(this);
-        }
-
         if (ActorSpawnedHandle.IsValid())
         {
             World->RemoveOnActorSpawnedHandler(ActorSpawnedHandle);
@@ -58,6 +60,17 @@ void UAudioReplicatorRegistrySubsystem::Deinitialize()
             World->GameStateSetEvent.Remove(GameStateSetHandle);
             GameStateSetHandle.Reset();
         }
+    }
+
+    if (GameModePostLoginHandle.IsValid())
+    {
+        FGameModeEvents::OnGameModePostLogin().Remove(GameModePostLoginHandle);
+        GameModePostLoginHandle.Reset();
+    }
+    if (GameModeLogoutHandle.IsValid())
+    {
+        FGameModeEvents::OnGameModeLogout().Remove(GameModeLogoutHandle);
+        GameModeLogoutHandle.Reset();
     }
 
     CachedGameState.Reset();
@@ -72,6 +85,20 @@ void UAudioReplicatorRegistrySubsystem::Deinitialize()
 void UAudioReplicatorRegistrySubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
     Super::OnWorldBeginPlay(InWorld);
+
+    if (InWorld.GetAuthGameMode<AGameModeBase>())
+    {
+        if (!GameModePostLoginHandle.IsValid())
+        {
+            GameModePostLoginHandle = FGameModeEvents::OnGameModePostLogin().AddUObject(
+                this, &UAudioReplicatorRegistrySubsystem::HandleGameModePostLogin);
+        }
+        if (!GameModeLogoutHandle.IsValid())
+        {
+            GameModeLogoutHandle = FGameModeEvents::OnGameModeLogout().AddUObject(
+                this, &UAudioReplicatorRegistrySubsystem::HandleGameModeLogout);
+        }
+    }
 
     if (AGameStateBase* GameState = InWorld.GetGameState())
     {
@@ -349,6 +376,26 @@ void UAudioReplicatorRegistrySubsystem::HandleLogout(AController* Exiting)
     {
         HandlePlayerStateRemoved(PlayerState);
     }
+}
+
+void UAudioReplicatorRegistrySubsystem::HandleGameModePostLogin(AGameModeBase* GameMode, APlayerController* NewPC)
+{
+    if (!GameMode || GameMode->GetWorld() != GetWorld())
+    {
+        return;
+    }
+
+    HandlePostLogin(NewPC);
+}
+
+void UAudioReplicatorRegistrySubsystem::HandleGameModeLogout(AGameModeBase* GameMode, AController* Exiting)
+{
+    if (!GameMode || GameMode->GetWorld() != GetWorld())
+    {
+        return;
+    }
+
+    HandleLogout(Exiting);
 }
 
 void UAudioReplicatorRegistrySubsystem::RefreshFromGameState(AGameStateBase* GameState)

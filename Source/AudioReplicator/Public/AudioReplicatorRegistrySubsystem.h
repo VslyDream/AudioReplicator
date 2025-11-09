@@ -87,6 +87,8 @@ private:
     void HandlePostLogin(APlayerController* NewPC);
     UFUNCTION()
     void HandleLogout(AController* Exiting);
+    void HandleGameModePostLogin(AGameModeBase* GameMode, APlayerController* NewPC);
+    void HandleGameModeLogout(AGameModeBase* GameMode, AController* Exiting);
     void HandlePlayerStateAdded(APlayerState* PlayerState);
     void HandlePlayerStateRemoved(APlayerState* PlayerState);
 
@@ -109,5 +111,7 @@ private:
 
     FDelegateHandle ActorSpawnedHandle;
     FDelegateHandle GameStateSetHandle;
+    FDelegateHandle GameModePostLoginHandle;
+    FDelegateHandle GameModeLogoutHandle;
     TWeakObjectPtr<AGameStateBase> CachedGameState;
 };
