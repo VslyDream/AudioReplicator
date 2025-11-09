@@ -2,6 +2,7 @@
 #include "Net/UnrealNetwork.h"
 #include "GameFramework/PlayerController.h"
 #include "AudioReplicatorBPLibrary.h" // leverage local blueprint helpers for encoding/decoding
+#include "AudioReplicatorRegistrySubsystem.h"
 
 UAudioReplicatorComponent::UAudioReplicatorComponent()
 {
@@ -12,6 +13,27 @@ UAudioReplicatorComponent::UAudioReplicatorComponent()
 void UAudioReplicatorComponent::BeginPlay()
 {
     Super::BeginPlay();
+
+    if (UWorld* World = GetWorld())
+    {
+        if (UAudioReplicatorRegistrySubsystem* Registry = World->GetSubsystem<UAudioReplicatorRegistrySubsystem>())
+        {
+            Registry->RegisterReplicator(this);
+        }
+    }
+}
+
+void UAudioReplicatorComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    if (UWorld* World = GetWorld())
+    {
+        if (UAudioReplicatorRegistrySubsystem* Registry = World->GetSubsystem<UAudioReplicatorRegistrySubsystem>())
+        {
+            Registry->UnregisterReplicator(this);
+        }
+    }
+
+    Super::EndPlay(EndPlayReason);
 }
 
 bool UAudioReplicatorComponent::IsOwnerClient() const
@@ -113,6 +135,14 @@ bool UAudioReplicatorComponent::StartBroadcastOpus(const TArray<FOpusPacket>& Pa
     // Send the header right away
     Server_StartTransfer(EffectiveSessionId, Header);
     Outgoing[EffectiveSessionId].bHeaderSent = true;
+
+    if (UWorld* World = GetWorld())
+    {
+        if (UAudioReplicatorRegistrySubsystem* Registry = World->GetSubsystem<UAudioReplicatorRegistrySubsystem>())
+        {
+            Registry->NotifySessionActivity(EffectiveSessionId, this);
+        }
+    }
 
     return true;
 }
@@ -387,6 +417,14 @@ void UAudioReplicatorComponent::Multicast_EndTransfer_Implementation(const FGuid
     if (FIncomingTransfer* In = Incoming.Find(SessionId))
     {
         In->bEnded = true;
+    }
+
+    if (UWorld* World = GetWorld())
+    {
+        if (UAudioReplicatorRegistrySubsystem* Registry = World->GetSubsystem<UAudioReplicatorRegistrySubsystem>())
+        {
+            Registry->NotifySessionActivity(SessionId, this);
+        }
     }
     OnTransferEnded.Broadcast(this, SessionId);
 }
