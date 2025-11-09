@@ -82,6 +82,8 @@ private:
     void HandleGameStateSet(AGameStateBase* GameState);
     void HandlePlayerStateAdded(APlayerState* PlayerState);
     void HandlePlayerStateRemoved(APlayerState* PlayerState);
+    void HandlePlayerStateEndPlay(AActor* Actor, EEndPlayReason::Type Reason);
+
 
     void BindToGameState(AGameStateBase* GameState);
     void RefreshFromGameState(AGameStateBase* GameState);

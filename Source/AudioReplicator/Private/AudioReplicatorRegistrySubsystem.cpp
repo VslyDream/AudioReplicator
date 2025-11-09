@@ -43,11 +43,6 @@ void UAudioReplicatorRegistrySubsystem::Deinitialize()
         }
     }
 
-    if (AGameStateBase* GameState = CachedGameState.Get())
-    {
-        GameState->OnPlayerStateAdded.RemoveAll(this);
-        GameState->OnPlayerStateRemoved.RemoveAll(this);
-    }
 
     CachedGameState.Reset();
     ReplicatorOwners.Empty();
@@ -78,7 +73,7 @@ void UAudioReplicatorRegistrySubsystem::SubscribeToChannel_BP(const FGuid& Sessi
     TArray<FReplicatorSubscription>& List = ChannelSubscriptions.FindOrAdd(SessionId);
     FReplicatorSubscription& Subscription = List.AddDefaulted_GetRef();
     Subscription.Callback = Callback;
-    Subscription.Listener = Callback.GetUObject();
+    Subscription.Listener = const_cast<UObject*>(Callback.GetUObject());
     Subscription.LastSessionId = SessionId;
 
     if (UAudioReplicatorComponent* Existing = GetLastSenderForSession_BP(SessionId))
@@ -99,7 +94,7 @@ void UAudioReplicatorRegistrySubsystem::SubscribeToPlayer_BP(APlayerState* Playe
     TArray<FReplicatorSubscription>& List = PlayerSubscriptions.FindOrAdd(Key);
     FReplicatorSubscription& Subscription = List.AddDefaulted_GetRef();
     Subscription.Callback = Callback;
-    Subscription.Listener = Callback.GetUObject();
+    Subscription.Listener = const_cast<UObject*>(Callback.GetUObject());
     Subscription.LastSessionId.Invalidate();
 
     if (UAudioReplicatorComponent* Existing = FindReplicatorForPlayer(PlayerState))
@@ -317,12 +312,8 @@ void UAudioReplicatorRegistrySubsystem::BindToGameState(AGameStateBase* GameStat
     }
 
     CachedGameState = GameState;
-
     if (GameState)
     {
-        GameState->OnPlayerStateAdded.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateAdded);
-        GameState->OnPlayerStateRemoved.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateRemoved);
-
         RefreshFromGameState(GameState);
     }
 }
@@ -350,8 +341,21 @@ void UAudioReplicatorRegistrySubsystem::RegisterFromPlayerState(APlayerState* Pl
     if (UAudioReplicatorComponent* Component = PlayerState->FindComponentByClass<UAudioReplicatorComponent>())
     {
         RegisterReplicator(Component);
+        PlayerState->OnEndPlay.AddUObject(this, &UAudioReplicatorRegistrySubsystem::HandlePlayerStateEndPlay);
     }
 }
+
+void UAudioReplicatorRegistrySubsystem::HandlePlayerStateEndPlay(AActor* Actor, EEndPlayReason::Type)
+{
+    if (APlayerState* PS = Cast<APlayerState>(Actor))
+    {
+        if (UAudioReplicatorComponent* Comp = PS->FindComponentByClass<UAudioReplicatorComponent>())
+        {
+            UnregisterReplicator(Comp);
+        }
+    }
+}
+
 
 void UAudioReplicatorRegistrySubsystem::NotifyChannelSubscribers(const FGuid& SessionId, UAudioReplicatorComponent* Component)
 {
