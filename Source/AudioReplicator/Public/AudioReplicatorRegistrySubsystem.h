@@ -51,6 +51,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "AudioReplicator|Registry")
     UAudioReplicatorComponent* GetLastSenderForSession_BP(const FGuid& SessionId) const;
 
+    /** Resolve the replicator component owned by the local player (if any). */
+    UFUNCTION(BlueprintCallable, Category = "AudioReplicator|Registry")
+    UAudioReplicatorComponent* GetLocalReplicator_BP() const;
+
     /** Fired when a replicator enters the registry. */
     UPROPERTY(BlueprintAssignable, Category = "AudioReplicator|Registry")
     FOnAudioReplicatorRegistryChanged OnReplicatorAdded;

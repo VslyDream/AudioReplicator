@@ -133,6 +133,32 @@ Attach to a **replicated actor** (prefer `PlayerController`).
 
 ---
 
+### Registry Subsystem (`AudioReplicatorRegistrySubsystem`)
+
+`UAudioReplicatorRegistrySubsystem` is a `UWorldSubsystem` that discovers every `UAudioReplicatorComponent` in the active world and keeps the catalog synchronized as PlayerStates join or leave.
+
+**Blueprint calls**
+
+* `SubscribeToChannel_BP(SessionId, Callback)` – Register a delegate that fires whenever a replicator emits activity for the given Opus session.
+* `SubscribeToPlayer_BP(PlayerState, Callback)` – Track replicators owned by a specific `APlayerState`.
+* `Unsubscribe_BP(SessionId, Listener)` / `UnsubscribeAllFor_BP(Listener)` – Remove one or all subscriptions bound to an object.
+* `GetLastSenderForSession_BP(SessionId)` – Resolve the most recent component that broadcast packets for the supplied session GUID.
+* `GetLocalReplicator_BP()` – Find the component owned by the local player (if any).
+
+**Events**
+
+* `OnReplicatorAdded` / `OnReplicatorRemoved` broadcast when components register or unregister so UI can react immediately.
+
+**Lifecycle hooks**
+
+* Components call `RegisterReplicator` / `UnregisterReplicator` from `BeginPlay` / `EndPlay`.
+* The subsystem binds to `AGameStateBase` and walks existing `APlayerState` objects so late initialization still captures already-spawned components.
+* `NotifySessionActivity` caches the last sender per `FGuid` and wakes any queued channel or player subscribers.
+
+If you extend the registry (new subscription styles, replication policies, etc.) mirror those expectations here so downstream agents keep documentation accurate.
+
+---
+
 ## Networking Semantics & Rationale
 
 

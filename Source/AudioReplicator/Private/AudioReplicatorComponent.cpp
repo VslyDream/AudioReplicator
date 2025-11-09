@@ -136,14 +136,6 @@ bool UAudioReplicatorComponent::StartBroadcastOpus(const TArray<FOpusPacket>& Pa
     Server_StartTransfer(EffectiveSessionId, Header);
     Outgoing[EffectiveSessionId].bHeaderSent = true;
 
-    if (UWorld* World = GetWorld())
-    {
-        if (UAudioReplicatorRegistrySubsystem* Registry = World->GetSubsystem<UAudioReplicatorRegistrySubsystem>())
-        {
-            Registry->NotifySessionActivity(EffectiveSessionId, this);
-        }
-    }
-
     return true;
 }
 
