@@ -30,7 +30,7 @@ StartBroadcastFromWav(WavAsset)
 ```
 StartBroadcastOpus(Packets, StreamHeader)
 ```
-   ![[Pasted image 20251109212010.png]]
+   ![[docs/assets/Pasted image 20251109212010.png]]
 ### 3. Subscribe
 
 **Using Registry Subsystem** (recommended):
@@ -44,10 +44,10 @@ SubscribeToPlayer(PlayerState), SubscribeToChannel(SessionID)
 ```
 Bind to: OnTransferStarted, OnChunkReceived, OnTransferEnded
 ```
-  ![[Pasted image 20251109213233.png]]
+  ![[docs/assets/Pasted image 20251109213233.png]]
 ### 4. Receive and Decode Audio
  Once the transfer ends, `GetReceivedPackets` returns the assembled frame list and header so you can decode or save the data locally.
-   ![[Pasted image 20251109213403.png]]
+   ![[docs/assets/Pasted image 20251109213403.png]]
 
 ## Core Concepts
 
