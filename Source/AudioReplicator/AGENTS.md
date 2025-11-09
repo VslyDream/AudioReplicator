@@ -15,6 +15,7 @@ Agents **must not** attempt to launch the Unreal Editor, run Play-In-Editor (PIE
 
 1. **Local audio transforms**: WAV (PCM16) ⇄ PCM16 ⇄ Opus (framed packets).
 2. **Network replication**: Client encodes Opus frames → sends to Server via RPC → Server multicasts to all clients.
+3. **World-level discovery**: `UAudioReplicatorRegistrySubsystem` tracks every active component and exposes Blueprint hooks for session/player subscriptions.
 
 Use cases:
 
@@ -44,6 +45,7 @@ Plugins/AudioReplicator/
    │  ├─ Public/
    │  │  ├─ AudioReplicatorBPLibrary.h        // BP nodes: local encode/decode + utilities
    │  │  ├─ AudioReplicatorComponent.h        // Network RPC component (Server/Multicast)
+   │  │  ├─ AudioReplicatorRegistrySubsystem.h// World subsystem for discovery/subscriptions
    │  │  ├─ OpusCodec.h                       // Thin C++ wrapper around libopus
    │  │  ├─ PcmWavUtils.h                     // Minimal WAV RIFF (PCM16) read/write
    │  │  ├─ Chunking.h                        // Packet buffer pack/unpack helpers
@@ -52,6 +54,7 @@ Plugins/AudioReplicator/
    │     ├─ AudioReplicatorModule.cpp
    │     ├─ AudioReplicatorBPLibrary.cpp
    │     ├─ AudioReplicatorComponent.cpp
+   │     ├─ AudioReplicatorRegistrySubsystem.cpp
    │     ├─ OpusCodec.cpp
    │     ├─ PcmWavUtils.cpp
    │     └─ Chunking.cpp
@@ -130,6 +133,18 @@ Attach to a **replicated actor** (prefer `PlayerController`).
 * Multicast: `Multicast_StartTransfer(SessionId, Header)` **Reliable**
 * Multicast: `Multicast_SendChunk(SessionId, Chunk)` **Unreliable**
 * Multicast: `Multicast_EndTransfer(SessionId)` **Reliable**
+
+### World Registry Subsystem (`AudioReplicatorRegistrySubsystem`)
+
+* Type: `UWorldSubsystem` that initializes on world start; listens for actor spawns and GameState changes to discover replicators owned by PlayerStates.
+* Blueprint Delegates: `OnReplicatorAdded`, `OnReplicatorRemoved` for lifecycle tracking.
+* Blueprint APIs:
+  * `SubscribeToChannel_BP(SessionId, Callback)` — callback executes with the replicator + session ID whenever activity occurs.
+  * `SubscribeToPlayer_BP(PlayerState, Callback)` — observe replicators for a specific player as they register/unregister.
+  * `Unsubscribe_BP(SessionId, Listener)` / `UnsubscribeAllFor_BP(Listener)` — remove subscriptions when UI/widget owners tear down.
+  * `GetLastSenderForSession_BP(SessionId)` — fetch component that most recently called `NotifySessionActivity` for that channel.
+  * `GetLocalReplicator_BP()` — resolve the replicator owned by the local player (uses cached PlayerState mapping).
+* Component Integration: `UAudioReplicatorComponent` calls `RegisterReplicator`, `UnregisterReplicator`, and `NotifySessionActivity` during lifecycle, ensuring the subsystem has fresh state for discovery and analytics widgets.
 
 ---
 
